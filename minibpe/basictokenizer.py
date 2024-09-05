@@ -1,63 +1,5 @@
 import unicodedata
-
-# python strings are immutable sequences of unicode code points
-# unicode is a definition for text-encoding as numbers
-# python builtin function ord()
-print([ord("A")])
-print([ord(x) for x in "Hello World!"])
-# why not use ord(). one reason is vocabulary will be very long.
-# more worrying reason, unicode is always changing updating, not very stable
-
-# unicode defines 3 types of encodings, utf-8 (most popular), utf-16, utf-32
-# utf-8 --> 1 to 4 bytes
-print(list("Hello World!".encode("utf-8")))
-print(list("Hello World!".encode("utf-16"))) 
-print(list("Hello World!".encode("utf-32")))
-# wastefullness of utf-16 and utf-32, many zeros
-# but we cannot use it naively,
-# utf-8 are byte-strings, implying a vocabulary length of 256
-# all of our text will be stretched out over very long sequences of bytes
-# embedding table tiny, prediction final layer tiny
-# finite context length in a transformer
-# attention is expensive
-# won't work for very long text for the next token prediction task
-# tokenization free would be amazing, feed raw bytes for our models
-
-# compress the bytes using the Byte Pair Encoding (BPE) algorithm
-# iteratively find the pair of byte that occur the most frequently
-# replace that pair with a new byte we append to the data
-#XdXac
-#X=ZY
-#Y=ab
-#Z=aa
-# iteratively find the pair of tokens that occur the most frequently
-# replace that pair with a new token we append to the vocabulary
-
-# most common pair of same two consecutive number
-def mcp2same_consecutive(nums):
-    pairs = {}
-    for i in range(len(nums) - 1):
-        if nums[i] == nums[i+1]:
-            pair = (nums[i], nums[i+1])
-            pairs[pair] = pairs.get(pair, 0) + 1
-    if not pairs:
-        return None  # Return None if no pairs are found
-    return max(pairs, key=pairs.get)
-
-# function that finds the most common pair
-# for i in range(len(bytes) - 1):
-#     pair = (bytes[i], bytes[i + 1])
-#     counts[pair] = counts.get(pair, 0) + 1
-
-# tokens = text.encode("utf-8")
-# tokens = list(map(int, tokens))
-# print(counts)
-# print(sorted(((v, k) for k,v in stats.items()), reverse=True))
-# print(chr(101), chr(32))
-# print(mcp2same_consecutive(tokens))
-# max(dict, func)
-# top_pair = max(stats, key=stats.get)
-
+import os
 # minbpe
 # Byte Pair Encoding (BPE) algorithm tokenization
 """
@@ -76,8 +18,12 @@ def get_stats(ids, counts=None):
     Example: [1, 2, 3, 1, 2] -> {(1, 2): 2, (2, 3): 1, (3, 1): 1}
     Optionally allows to update an existing dictionary of counts
     """
-    # Calculate the frequency of pairs of tokens.
+    # Initialize counts dictionary if not provided.
     counts = {} if counts is None else counts
+    # Check if ids has enough elements to form pairs.
+    if len(ids) < 2:
+        return counts
+    # Calculate the frequency of pairs of tokens.
     for pair in zip(ids, ids[1:]): # iterate consecutive elements
         counts[pair] = counts.get(pair, 0) + 1
     return counts
@@ -155,7 +101,7 @@ class BasicTokenizer:
             ids = merge(ids, pair, idx)
             # save the merge
             merges[pair] = idx
-            vocab[idx] = vocab[pair[1]] + vocab[pair[1]]
+            vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
             # prints
             if verbose:
                 print(f"Merging {pair} into a new token {idx}")
@@ -199,7 +145,7 @@ class BasicTokenizer:
         vocab = {idx: bytes([idx]) for idx in range(256)}
         # replace bytes([idx]) at idx with byte pair at idx
         for (p0, p1), idx in self.merges.items():
-            self.vocab[idx] = self.vocab[p0] + self.vocab[p1]
+            vocab[idx] = vocab[p0] + vocab[p1]
         for special, idx in self.special_tokens.items():
             vocab[idx] = special.encode("utf-8")
         return vocab
@@ -212,7 +158,12 @@ class BasicTokenizer:
         - vocab file is just a pretty printed version for human inspection only
         """
         # write the model: to be used in load() later
-        model_file = file_prefix + ".model"
+        models_path = "/Users/andrewzhou/microservices_suite/models"
+        # Ensure the directory exists
+        if not os.path.exists(models_path):
+            os.makedirs(models_path)
+        # Construct file paths using os.path.join for proper formatting
+        model_file = os.path.join(models_path, file_prefix + ".model")
         with open(model_file, 'w') as f:
             # write the version, pattern and merges, that's all that's needed
             f.write("minbpe v1\n")
@@ -224,8 +175,9 @@ class BasicTokenizer:
             # the merges dict
             for idx1, idx2 in self.merges:
                 f.write(f"{idx1} {idx2}\n")
+            print("Saved model")
         # write the vocab: for human to look at
-        vocab_file = file_prefix + ".vocab"
+        vocab_file = os.path.join(models_path, file_prefix + ".vocab")
         inverted_merges = {idx:pair for pair, idx in self.merges.items()}
         with open(vocab_file, "w", encoding="utf-8") as f:
             for idx, token in self.vocab.items():
@@ -246,6 +198,7 @@ class BasicTokenizer:
                     # otherwise this is leaf token, just print it
                     # (this should just be the first 256 tokens, the bytes)
                     f.write(f"[{s} {idx}\n]")
+            print("Saved vocab")
     
     def load(self, model_file):
         """Inverse of save() but only for the model file"""
@@ -254,7 +207,9 @@ class BasicTokenizer:
         merges = {}
         special_tokens = {}
         idx = 256
-        with open(model_file, 'r', encoding="utf-8") as f:
+        models_path = "/Users/andrewzhou/microservices_suite/models"
+        model_path = os.path.join(models_path, model_file)
+        with open(model_path, 'r', encoding="utf-8") as f:
             # read the version
             version = f.readline().strip()
             assert version == "minbpe v1"
@@ -273,13 +228,16 @@ class BasicTokenizer:
         self.merges = merges
         self.special_tokens = special_tokens
         self.vocab = self._build_vocab()
+        print("load success")
 
 # test basic tokenizer is working
 text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
-v_size = 276 # the desired final vocabulary size
+vocab_size = 276 # the desired final vocabulary size
 
 basic_tokenizer = BasicTokenizer()
-basic_tokenizer.train(text, vocab_size=v_size, verbose=True)
+basic_tokenizer.train(text, vocab_size=vocab_size, verbose=True)
+basic_tokenizer.save('basic')
+basic_tokenizer.load('basic.model')
 
 test_text = "🅤🅝🅘🅒🅞🅓🅔! 😄"
 encoded_test = basic_tokenizer.encode(test_text)
@@ -289,8 +247,6 @@ print(decoded_test == test_text)
 test_text2 = "Hello World 123"
 encoded_test2 = basic_tokenizer.encode(test_text2)
 decoded_test2 = basic_tokenizer.decode(encoded_test2)
-print(decoded_test2)
-print(test_text2)
 print(decoded_test2 == test_text2)
 
 basictext = basic_tokenizer.decode(basic_tokenizer.encode(text))

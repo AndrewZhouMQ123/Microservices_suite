@@ -4,6 +4,7 @@
 import torch # we use PyTorch
 import torch.nn as nn
 from torch.nn import functional as F
+from ..minibpe.regextokenizer import RegexTokenizer
 
 # hyperparameters
 batch_size= 64 # how many independent sequences will we process in parallel

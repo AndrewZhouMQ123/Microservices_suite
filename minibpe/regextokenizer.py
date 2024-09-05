@@ -1,6 +1,6 @@
 import regex as re # regex is a more powerful module than the built-in re
 import tiktoken # official library for tokenization from openAI
-from .basictokenizer import BasicTokenizer, get_stats, merge
+from basictokenizer import BasicTokenizer, get_stats, merge
 
 # GPT-2 (does not merge spaces)
 enc  = tiktoken.get_encoding("gpt2")
@@ -14,7 +14,6 @@ GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1
 # Forced splits using regex patterns (GPT series)
 gpt2pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+""")
 gpt4pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+""")
-text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
 
 print(re.findall(gpt2pat, "Hello've world123 how's are you"))
 print(re.findall(gpt4pat, "Hello've world123 how's are you"))
@@ -32,6 +31,11 @@ Unlike BasicTokenizer:
 
 class RegexTokenizer(BasicTokenizer):
     def __init__(self, pattern=None):
+        """
+        - pattern: optional string to override the default (GPT-4 split pattern)
+        - special_tokens: str -> int dictionary of special tokens
+          example: {'<|endoftext|>': 100257}
+        """
         super().__init__()
         self.pattern = GPT4_SPLIT_PATTERN if pattern is None else pattern
         self.compiled_pattern = re.compile(self.pattern)
@@ -45,12 +49,11 @@ class RegexTokenizer(BasicTokenizer):
 
         # split the text up into text chunks
         text_chunks = re.findall(self.compiled_pattern, text)
-
         # input text preprocessing
         ids = [list(ch.encode("utf-8")) for ch in text_chunks]
 
         if verbose:
-            print(text)
+            # print(text)
             print("length:", len(text))
             print(ids)
             print("length:", len(ids))
@@ -65,29 +68,31 @@ class RegexTokenizer(BasicTokenizer):
             for chunk_ids in ids:
                 # passing in stats will update it in place, adding up counts
                 get_stats(chunk_ids, stats)
-            # find the pair with the highest count
-            pair = max(stats, key=stats.get)
-            # mint a new token: assign it the next available id
-            idx = 256 + i
-            # replace all occurrences of pair in ids with idx
-            ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
-            # save the merge
-            merges[pair] = idx
-            vocab[idx] = vocab[pair[1]] + vocab[pair[1]]
-            # prints
-            if verbose:
-                print(f"Merging {pair} into a new token {idx}")
+            
+            if stats: # guard
+                # find the pair with the highest count
+                pair = max(stats, key=stats.get)
+                # mint a new token: assign it the next available id
+                idx = 256 + i
+                # replace all occurrences of pair in ids with idx
+                ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
+                # save the merge
+                merges[pair] = idx
+                vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
+                # prints
+                if verbose:
+                    print(f"Merging {pair} into a new token {idx}")
 
         if verbose:
             print("Training complete.")
-            print("Final vocab size:", len(self.vocab))
-            print(f"Compression ratio: {len(self.tokens) / len(ids):.2f}X")
+            print("Final vocab size:", len(vocab))
+            print(f"Compression ratio: {len(text_chunks) / len(ids):.2f}X")
 
         # save class variables
         self.merges = merges # used in encode()
         self.vocab = vocab   # used in decode()
 
-    def register_special_tokens(self, special_tokens):
+    def register_special_tokens(self, special_tokens: dict[str]) -> str:
         # special_tokens is a dictionary of str -> int
         # example: {"<|endoftext|>": 100257}
         self.special_tokens = special_tokens
@@ -182,6 +187,7 @@ class RegexTokenizer(BasicTokenizer):
         text = text_bytes.decode("utf-8", errors="replace")
         return text
 
+vocab_size = 30000
 # GPT-2 (does not merge spaces)
 enc2  = tiktoken.get_encoding("gpt2")
 print(enc2.encode("    hello world!!!"))
@@ -191,21 +197,30 @@ enc4 = tiktoken.get_encoding("cl100k_base") # this is the GPT-4 tokenizer
 ids = enc4.encode("hello world!!!? (안녕하세요!) lol123 😉")
 devtext = enc4.decode(ids) # get the same text back
 
+# initialize regex_tokenizer
 regex_tokenizer = RegexTokenizer()
+
+# train on 
+text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
+# read to inspect
+with open('tests/taylorswift.txt', 'r', encoding='utf-8') as f:
+    taylor = f.read()
+
+regex_tokenizer.train(text+taylor, vocab_size)
+regex_tokenizer.save('regex')
+regex_tokenizer.load('regex.model')
+
 regexdevtext = regex_tokenizer.decode(regex_tokenizer.encode("hello world!!!? (안녕하세요!) lol123 😉"))
 print(regexdevtext == devtext)
-
 # bigger test using text 
 # Encode with GPT-4 tokenizer
+
+# test on text
 gpttext = enc4.decode(enc4.encode(text))
 regextext = regex_tokenizer.decode(regex_tokenizer.encode(text))
 print(regextext == gpttext)
 
 # test on taylorswift.txt wikipedia page on taylor swift
-# read to inspect
-with open('tests/taylorswift.txt', 'r', encoding='utf-8') as f:
-    taylor = f.read()
-
 gpttext = enc4.decode(enc4.encode(taylor))
 regextext = regex_tokenizer.decode(regex_tokenizer.encode(taylor))
 print(regextext == gpttext)
